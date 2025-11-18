@@ -394,18 +394,40 @@ bool qhookerMain::GameSearching(const QString &input)
                                            portNum+1, validDevices.at(portNum).vendorIdentifier(), validDevices.at(portNum).productIdentifier(), serialPort.at(portNum)->portName().toLocal8Bit().constData());
                                 }
                             }
-                        } else if(tempBuffer.at(0).contains("cmw")) {
-                            int portNum = tempBuffer.at(0).at(4).digitValue()-1;
-                            if(portNum >= 0 && portNum < validIDs.size()) {
-                                if(serialPort.at(portNum)->isOpen()) {
-                                    serialPort.at(portNum)->write(tempBuffer.at(0).mid(6).toLocal8Bit());
-                                    if(!serialPort.at(portNum)->waitForBytesWritten(500))
-                                        printf("Wrote to port no. %d (%04X:%04X @ %s), but wasn't sent in time apparently!?\n",
-                                               portNum+1, validDevices.at(portNum).vendorIdentifier(), validDevices.at(portNum).productIdentifier(), serialPort.at(portNum)->portName().toLocal8Bit().constData());
-                                } else  printf("Requested to write to port no. %d (%04X:%04X @ %s), but it's not even open yet!\n",
-                                               portNum+1, validDevices.at(portNum).vendorIdentifier(), validDevices.at(portNum).productIdentifier(), serialPort.at(portNum)->portName().toLocal8Bit().constData());
+                        } else if (tempBuffer.at(0).contains("cmw")) {
+                            int portNum = tempBuffer.at(0).at(4).digitValue() - 1;
+                            if (portNum >= 0 && portNum < validIDs.size()) {
+                                if (serialPort.at(portNum)->isOpen()) {
+                                    QByteArray payload = tempBuffer.at(0).mid(6).toLocal8Bit();
+                                    qint64 written = serialPort.at(portNum)->write(payload);
+                                    if (written < 0) {
+                                        // Real error case – port actually spat the dummy
+                                        printf("Failed to write to port no. %d (%04X:%04X @ %s): %s\n",
+                                            portNum + 1,
+                                            validDevices.at(portNum).vendorIdentifier(),
+                                            validDevices.at(portNum).productIdentifier(),
+                                            serialPort.at(portNum)->portName().toLocal8Bit().constData(),
+                                            serialPort.at(portNum)->errorString().toLocal8Bit().constData());
+                                    } else if (written != payload.size()) {
+                                        // Non-fatal: short write, but don’t kill the port
+                                        printf("Partial write to port no. %d (%04X:%04X @ %s): %lld / %d bytes\n",
+                                            portNum + 1,
+                                            validDevices.at(portNum).vendorIdentifier(),
+                                            validDevices.at(portNum).productIdentifier(),
+                                            serialPort.at(portNum)->portName().toLocal8Bit().constData(),
+                                            static_cast<long long>(written),
+                                            payload.size());
+                                    }
+
+                                    // *** no waitForBytesWritten() here ***
+                                } else {
+                                    printf("Requested to write to port no. %d (%04X:%04X @ %s), but it's not even open yet!\n",
+                                        portNum + 1,
+                                        validDevices.at(portNum).productIdentifier(),
+                                        serialPort.at(portNum)->portName().toLocal8Bit().constData());
+                                }
                             }
-                        }
+                        }    
                         tempBuffer.removeFirst();
                     }
                 }
