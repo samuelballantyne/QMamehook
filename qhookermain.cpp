@@ -526,20 +526,45 @@ bool qhookerMain::GameStarted(const QString &input)
                     // right is for 1. Does not need replacement, but ignore "nul"
                     QStringList action = settingsMap.value(func).mid(settingsMap.value(func).indexOf('|')+1).split(',', Qt::SkipEmptyParts);
                     for(int i = 0; i < action.length(); ++i) {
-                        if(action.at(i).contains("cmw")) {
-                            int portNum = action.at(i).at(action.at(i).indexOf("cmw")+4).digitValue()-1;
-                            if(portNum >= 0 && portNum < validIDs.size()) {
-                                // if contains %s%, s needs to be replaced by state.
-                                // yes, even here, in case of stupid.
-                                if(action.at(i).contains("%s%"))
-                                    action[i] = action[i].replace("%s%", "%1").arg(1);
+if (action.at(i).contains("cmw")) {
+    int portNum = action.at(i).at(action.at(i).indexOf("cmw") + 4).digitValue() - 1;
 
-                                serialPort.at(portNum)->write(action.at(i).mid(action.at(i).indexOf("cmw")+6).toLocal8Bit());
-                                if(!serialPort.at(portNum)->waitForBytesWritten(500))
-                                    printf("Wrote to port no. %d (%04X:%04X @ %s), but wasn't sent in time apparently!?\n",
-                                           portNum+1, validDevices.at(portNum).vendorIdentifier(), validDevices.at(portNum).productIdentifier(), serialPort.at(portNum)->portName().toLocal8Bit().constData());
-                            }
-                        }
+    if (portNum >= 0 && portNum < validIDs.size()) {
+        // if contains %s%, s needs to be replaced by state.
+        if (action.at(i).contains("%s%")) {
+            action[i] = action[i].replace("%s%", "%1")
+                            .arg(buffer[0].mid(buffer[0].indexOf('=') + 2).toInt());
+        }
+
+        QByteArray payload =
+            action.at(i).mid(action.at(i).indexOf("cmw") + 6).toLocal8Bit();
+
+        qint64 written = serialPort.at(portNum)->write(payload);
+
+        if (written < 0) {
+            // Real error
+            printf("Failed to write to port no. %d (%04X:%04X @ %s): %s\n",
+                   portNum + 1,
+                   validDevices.at(portNum).vendorIdentifier(),
+                   validDevices.at(portNum).productIdentifier(),
+                   serialPort.at(portNum)->portName().toLocal8Bit().constData(),
+                   serialPort.at(portNum)->errorString().toLocal8Bit().constData());
+            // Optional: serialPort.at(portNum)->clear(QSerialPort::AllDirections);
+        } else if (written != payload.size()) {
+            // Partial write – warn, but don't nuke the port
+            printf("Partial write to port no. %d (%04X:%04X @ %s): %lld / %d bytes\n",
+                   portNum + 1,
+                   validDevices.at(portNum).vendorIdentifier(),
+                   validDevices.at(portNum).productIdentifier(),
+                   serialPort.at(portNum)->portName().toLocal8Bit().constData(),
+                   static_cast<long long>(written),
+                   payload.size());
+        }
+
+        // *** NO waitForBytesWritten() HERE ***
+    }
+}
+
                     }
                 } else {
                     // left is for 0. Does not need replacement, but ignore "nul"
