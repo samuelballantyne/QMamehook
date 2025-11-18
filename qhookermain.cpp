@@ -445,221 +445,233 @@ bool qhookerMain::GameSearching(const QString &input)
 
 bool qhookerMain::GameStarted(const QString &input)
 {
-    if(buffer.isEmpty())
+    // If there's no leftover buffer, split the incoming chunk
+    if (buffer.isEmpty())
         buffer = input.split('\r', Qt::SkipEmptyParts);
 
-    while(!buffer.isEmpty()) {
+    // Helper: write a list of "cmw" actions with a given numeric state
+    auto writeActions = [this](const QStringList &actions, int stateValue)
+    {
+        for (QString action : actions) {
+            action = action.trimmed();
+            if (action.isEmpty())
+                continue;
+
+            if (!action.contains("cmw"))
+                continue;
+
+            int cmwIndex = action.indexOf("cmw");
+            if (cmwIndex < 0 || cmwIndex + 5 >= action.size())
+                continue;
+
+            int portNum = action.at(cmwIndex + 4).digitValue() - 1;
+            if (portNum < 0 || portNum >= validIDs.size())
+                continue;
+
+            QSerialPort *port = serialPort.at(portNum);
+            if (!port || !port->isOpen()) {
+                printf("Requested to write to port no. %d (%04X:%04X @ %s), but it's not open! (GameStarted)\n",
+                       portNum + 1,
+                       validDevices.at(portNum).vendorIdentifier(),
+                       validDevices.at(portNum).productIdentifier(),
+                       port ? port->portName().toLocal8Bit().constData() : "<null>");
+                continue;
+            }
+
+            // Replace %s% with current state if needed
+            if (action.contains("%s%"))
+                action = action.replace("%s%", "%1").arg(stateValue);
+
+            QByteArray payload = action.mid(cmwIndex + 6).toLocal8Bit();
+
+            qint64 written = port->write(payload);
+            if (written < 0) {
+                QSerialPort::SerialPortError err = port->error();
+                printf("Serial write FAILED on port no. %d (%04X:%04X @ %s): err=%d, %s\n",
+                       portNum + 1,
+                       validDevices.at(portNum).vendorIdentifier(),
+                       validDevices.at(portNum).productIdentifier(),
+                       port->portName().toLocal8Bit().constData(),
+                       static_cast<int>(err),
+                       port->errorString().toLocal8Bit().constData());
+            } else if (written != payload.size()) {
+                printf("Partial write on port no. %d (%04X:%04X @ %s): %lld / %d bytes\n",
+                       portNum + 1,
+                       validDevices.at(portNum).vendorIdentifier(),
+                       validDevices.at(portNum).productIdentifier(),
+                       port->portName().toLocal8Bit().constData(),
+                       static_cast<long long>(written),
+                       payload.size());
+            }
+            // NOTE: no waitForBytesWritten() here on purpose
+        }
+    };
+
+    while (!buffer.isEmpty()) {
         buffer[0] = buffer.at(0).trimmed();
+        if (buffer[0].isEmpty()) {
+            buffer.removeFirst();
+            continue;
+        }
 
-        if(verbosity) printf("%s\n", buffer.at(0).toLocal8Bit().constData());
+        if (verbosity)
+            printf("%s\n", buffer.at(0).toLocal8Bit().constData());
 
-        QString func = buffer.at(0).left(buffer.at(0).indexOf(' '));
+        const QString func = buffer.at(0).left(buffer.at(0).indexOf(' '));
 
-        // purge the current game name if stop signal is sent
-        if(func == "mame_stop") {
+        // --------------------------------------------------------------------
+        // mame_stop: tear down current game and close ports
+        // --------------------------------------------------------------------
+        if (func == "mame_stop") {
             printf("mame_stop signal received, disconnecting...\n");
 
-            if(!gameName.isEmpty()) {
+            if (!gameName.isEmpty()) {
                 gameName.clear();
 
-                if(settings && settings->contains("MameStop") && settings->value("MameStop").type() == QMetaType::QStringList) {
+                if (settings &&
+                    settings->contains("MameStop") &&
+                    settings->value("MameStop").type() == QMetaType::QStringList)
+                {
                     QStringList tempBuffer = settings->value("MameStop").toStringList();
-                    //qInfo() << tempBuffer;
-                    while(!tempBuffer.isEmpty()) {
-                        if(tempBuffer.at(0).contains("cmw")) {
-                            int portNum = tempBuffer.at(0).at(4).digitValue()-1;
-                            if(portNum >= 0 && portNum < validIDs.size()) {
-                                if(serialPort.at(portNum)->isOpen()) {
-                                    serialPort.at(portNum)->write(tempBuffer.at(0).mid(6).toLocal8Bit());
-                                    if(!serialPort.at(portNum)->waitForBytesWritten(500))
-                                        printf("Wrote to port no. %d (%04X:%04X @ %s), but wasn't sent in time apparently!? 475\n",
-                                               portNum+1, validDevices.at(portNum).vendorIdentifier(), validDevices.at(portNum).productIdentifier(), serialPort.at(portNum)->portName().toLocal8Bit().constData());
-                                } else  printf("Requested to write to port no. %d (%04X:%04X @ %s), but it's not even open yet!\n",
-                                           portNum+1, validDevices.at(portNum).vendorIdentifier(), validDevices.at(portNum).productIdentifier(), serialPort.at(portNum)->portName().toLocal8Bit().constData());
+
+                    while (!tempBuffer.isEmpty()) {
+                        QString cmd = tempBuffer.first().trimmed();
+
+                        if (cmd.contains("cmw")) {
+                            int portNum = cmd.at(4).digitValue() - 1;
+                            if (portNum >= 0 && portNum < validIDs.size()) {
+                                QSerialPort *port = serialPort.at(portNum);
+                                if (port && port->isOpen()) {
+                                    QByteArray payload = cmd.mid(6).toLocal8Bit();
+                                    qint64 written = port->write(payload);
+                                    if (written < 0) {
+                                        printf("Failed to write MameStop cmw to port %d (%04X:%04X @ %s): %s\n",
+                                               portNum + 1,
+                                               validDevices.at(portNum).vendorIdentifier(),
+                                               validDevices.at(portNum).productIdentifier(),
+                                               port->portName().toLocal8Bit().constData(),
+                                               port->errorString().toLocal8Bit().constData());
+                                    }
+                                } else {
+                                    printf("Requested to write to port no. %d (%04X:%04X @ %s), but it's not even open yet! (MameStop cmw)\n",
+                                           portNum + 1,
+                                           validDevices.at(portNum).vendorIdentifier(),
+                                           validDevices.at(portNum).productIdentifier(),
+                                           port ? port->portName().toLocal8Bit().constData() : "<null>");
+                                }
                             }
-                        } else if(tempBuffer.at(0).contains("cmc")) {
-                            // close serial port at number (index(4))
-                            int portNum = tempBuffer.at(0).at(4).digitValue()-1;
-                            if(portNum >= 0 && portNum < validIDs.size()) {
-                                if(serialPort.at(portNum)->isOpen()) {
-                                    serialPort.at(portNum)->close();
+                        } else if (cmd.contains("cmc")) {
+                            int portNum = cmd.at(4).digitValue() - 1;
+                            if (portNum >= 0 && portNum < validIDs.size()) {
+                                QSerialPort *port = serialPort.at(portNum);
+                                if (port && port->isOpen()) {
+                                    port->close();
                                     printf("Closed port no. %d (%04X:%04X @ %s)\n",
-                                           portNum+1, validDevices.at(portNum).vendorIdentifier(), validDevices.at(portNum).productIdentifier(), serialPort.at(portNum)->portName().toLocal8Bit().constData());
-                                } else printf("Waaaaait a second... Port %d (%04X:%04X @ %s) is already closed!\n",
-                                              portNum+1, validDevices.at(portNum).vendorIdentifier(), validDevices.at(portNum).productIdentifier(), serialPort.at(portNum)->portName().toLocal8Bit().constData());
+                                           portNum + 1,
+                                           validDevices.at(portNum).vendorIdentifier(),
+                                           validDevices.at(portNum).productIdentifier(),
+                                           port->portName().toLocal8Bit().constData());
+                                } else {
+                                    printf("Waaaaait a second... Port %d (%04X:%04X @ %s) is already closed!\n",
+                                           portNum + 1,
+                                           validDevices.at(portNum).vendorIdentifier(),
+                                           validDevices.at(portNum).productIdentifier(),
+                                           port ? port->portName().toLocal8Bit().constData() : "<null>");
+                                }
                             }
                         }
+
                         tempBuffer.removeFirst();
                     }
 
-                    for(int portNum = 0; portNum < validIDs.size(); ++portNum)
-                        if(serialPort.at(portNum)->isOpen()) {
-                            serialPort.at(portNum)->write("E");
-                            serialPort.at(portNum)->waitForBytesWritten(500);
-                            serialPort.at(portNum)->close();
+                    // Force-close any ports still open with 'E'
+                    for (int portNum = 0; portNum < validIDs.size(); ++portNum) {
+                        QSerialPort *port = serialPort.at(portNum);
+                        if (port && port->isOpen()) {
+                            port->write("E");      // no wait; fire-and-forget
+                            port->close();
                             printf("Force-closed port no. %d (%04X:%04X @ %s) - was opened incidentally without a corresponding close command.\n",
-                                   portNum+1, validDevices.at(portNum).vendorIdentifier(), validDevices.at(portNum).productIdentifier(), serialPort.at(portNum)->portName().toLocal8Bit().constData());
+                                   portNum + 1,
+                                   validDevices.at(portNum).vendorIdentifier(),
+                                   validDevices.at(portNum).productIdentifier(),
+                                   port->portName().toLocal8Bit().constData());
                         }
+                    }
 
                     delete settings;
+                    settings = nullptr;
                     settingsMap.clear();
-                } else for(int portNum = 0; portNum < validIDs.size(); ++portNum) {
-                    if(serialPort.at(portNum)->isOpen()) {
-                        serialPort.at(portNum)->write("E");
-                        if(serialPort.at(portNum)->waitForBytesWritten(500)) {
-                            serialPort.at(portNum)->close();
+                }
+                else {
+                    // No MameStop entry: just send E + close all open ports
+                    for (int portNum = 0; portNum < validIDs.size(); ++portNum) {
+                        QSerialPort *port = serialPort.at(portNum);
+                        if (port && port->isOpen()) {
+                            port->write("E");
+                            port->close();
                             printf("Force-closed port no. %d (%04X:%04X @ %s) since this game has no MameStop entry.\n",
-                                   portNum+1, validDevices.at(portNum).vendorIdentifier(), validDevices.at(portNum).productIdentifier(), serialPort.at(portNum)->portName().toLocal8Bit().constData());
-                        } else printf("Sent close signal to port %d (%04X:%04X @ %s), but wasn't sent in time apparently!? 513\n",
-                                      portNum+1, validDevices.at(portNum).vendorIdentifier(), validDevices.at(portNum).productIdentifier(), serialPort.at(portNum)->portName().toLocal8Bit().constData());
+                                   portNum + 1,
+                                   validDevices.at(portNum).vendorIdentifier(),
+                                   validDevices.at(portNum).productIdentifier(),
+                                   port->portName().toLocal8Bit().constData());
+                        }
                     }
                 }
             }
+
             buffer.clear();
             return true;
-        // checking if a command for this input channel exists
-        } else if(!settingsMap[func].isEmpty()) {
-            //qDebug() << "Hey, this one isn't empty!"; // testing
-            //qDebug() << settingsMap[func]; // testing
-            if(settingsMap.value(func).contains('|')) {
-                if(buffer[0].right(1).toInt()) {
-                    // right is for 1. Does not need replacement, but ignore "nul"
-                    QStringList action = settingsMap.value(func).mid(settingsMap.value(func).indexOf('|')+1).split(',', Qt::SkipEmptyParts);
-                    for(int i = 0; i < action.length(); ++i) {
-if (action.at(i).contains("cmw")) {
-    int portNum = action.at(i).at(action.at(i).indexOf("cmw") + 4).digitValue() - 1;
-
-    if (portNum >= 0 && portNum < validIDs.size()) {
-        // if contains %s%, s needs to be replaced by state.
-        if (action.at(i).contains("%s%")) {
-            action[i] = action[i].replace("%s%", "%1")
-                            .arg(buffer[0].mid(buffer[0].indexOf('=') + 2).toInt());
         }
 
-        QByteArray payload =
-            action.at(i).mid(action.at(i).indexOf("cmw") + 6).toLocal8Bit();
+        // --------------------------------------------------------------------
+        // Normal output: mapped in settingsMap[func]
+        // --------------------------------------------------------------------
+        else if (!settingsMap[func].isEmpty()) {
+            const QString mapping = settingsMap.value(func);
 
-        qint64 written = serialPort.at(portNum)->write(payload);
+            // Split bitfield mapping ("0-side|1-side")
+            if (mapping.contains('|')) {
+                const int pipeIndex = mapping.indexOf('|');
+                const bool isRightSide = buffer[0].right(1).toInt() != 0;
 
-        if (written < 0) {
-            // Real error
-            printf("Failed to write to port no. %d (%04X:%04X @ %s): %s\n",
-                   portNum + 1,
-                   validDevices.at(portNum).vendorIdentifier(),
-                   validDevices.at(portNum).productIdentifier(),
-                   serialPort.at(portNum)->portName().toLocal8Bit().constData(),
-                   serialPort.at(portNum)->errorString().toLocal8Bit().constData());
-            // Optional: serialPort.at(portNum)->clear(QSerialPort::AllDirections);
-        } else if (written != payload.size()) {
-            // Partial write – warn, but don't nuke the port
-            printf("Partial write to port no. %d (%04X:%04X @ %s): %lld / %d bytes\n",
-                   portNum + 1,
-                   validDevices.at(portNum).vendorIdentifier(),
-                   validDevices.at(portNum).productIdentifier(),
-                   serialPort.at(portNum)->portName().toLocal8Bit().constData(),
-                   static_cast<long long>(written),
-                   payload.size());
+                QString sideString;
+                if (isRightSide)
+                    sideString = mapping.mid(pipeIndex + 1);
+                else
+                    sideString = mapping.left(pipeIndex);
+
+                QStringList actions = sideString.split(',', Qt::SkipEmptyParts);
+
+                // For these, %s% is usually just 0 or 1 depending on side
+                writeActions(actions, isRightSide ? 1 : 0);
+            }
+            // %s% wildcards: replace with numeric value from the message
+            else {
+                QStringList actions = mapping.split(',', Qt::SkipEmptyParts);
+
+                int stateVal = 0;
+                int eqIndex = buffer[0].indexOf('=');
+                if (eqIndex >= 0)
+                    stateVal = buffer[0].mid(eqIndex + 1).trimmed().toInt();
+
+                writeActions(actions, stateVal);
+            }
         }
 
-        // *** NO waitForBytesWritten() HERE ***
-    }
-}
-
-                    }
-                } else {
-                    // left is for 0. Does not need replacement, but ignore "nul"
-                    QStringList action = settingsMap.value(func).left(settingsMap.value(func).indexOf('|')).split(',', Qt::SkipEmptyParts);
-                    for(int i = 0; i < action.length(); ++i) {
-                        if(action.at(i).contains("cmw")) {
-                            // we can safely assume that "cmw" on the left side will always be at a set place.
-                            int portNum = action.at(i).at(action.at(i).indexOf("cmw")+4).digitValue()-1;
-
-                            if(portNum >= 0 && portNum < validIDs.size()) {
-                                // if contains %s%, s needs to be replaced by state.
-                                // yes, even here, in case of stupid.
-                                if(action.at(i).contains("%s%"))
-                                    action[i] = action[i].replace("%s%", "%1").arg(0);
-
-                                serialPort.at(portNum)->write(action.at(i).mid(action.at(i).indexOf("cmw")+6).toLocal8Bit());
-                                if(!serialPort.at(portNum)->waitForBytesWritten(500))
-                                    printf("Wrote to port no. %d (%04X:%04X @ %s), but wasn't sent in time apparently!? 585\n",
-                                           portNum+1, validDevices.at(portNum).vendorIdentifier(), validDevices.at(portNum).productIdentifier(), serialPort.at(portNum)->portName().toLocal8Bit().constData());
-                            }
-                        }
-                    }
-                }
-            // %s% wildcards: just replace with the number received
-            } else {
-    QStringList action = settingsMap[func].split(',', Qt::SkipEmptyParts);
-
-    for (int i = 0; i < action.length(); ++i) {
-        if (!action.at(i).contains("cmw"))
-            continue;
-
-        int cmwIndex = action.at(i).indexOf("cmw");
-        int portNum  = action.at(i).at(cmwIndex + 4).digitValue() - 1;
-
-        if (portNum < 0 || portNum >= validIDs.size())
-            continue;
-
-        QSerialPort *port = serialPort.at(portNum);
-        if (!port || !port->isOpen()) {
-            printf("Requested to write to port no. %d (%04X:%04X @ %s), but it's not open! (live output)\n",
-                   portNum + 1,
-                   validDevices.at(portNum).vendorIdentifier(),
-                   validDevices.at(portNum).productIdentifier(),
-                   port ? port->portName().toLocal8Bit().constData() : "<null>");
-            continue;
-        }
-
-        QString cmd = action.at(i);
-
-        // if contains %s%, s needs to be replaced by state.
-        if (cmd.contains("%s%")) {
-            int stateVal = buffer[0].mid(buffer[0].indexOf('=') + 2).toInt();
-            cmd = cmd.replace("%s%", "%1").arg(stateVal);
-        }
-
-        QByteArray payload = cmd.mid(cmwIndex + 6).toLocal8Bit();
-
-        qint64 written = port->write(payload);
-
-        if (written < 0) {
-            QSerialPort::SerialPortError err = port->error();
-            printf("Serial write FAILED on port no. %d (%04X:%04X @ %s): err=%d, %s\n",
-                   portNum + 1,
-                   validDevices.at(portNum).vendorIdentifier(),
-                   validDevices.at(portNum).productIdentifier(),
-                   port->portName().toLocal8Bit().constData(),
-                   static_cast<int>(err),
-                   port->errorString().toLocal8Bit().constData());
-            // Optional recovery:
-            // port->clear(QSerialPort::AllDirections);
-            // port->close(); // will be reopened on next cmo
-        } else if (written != payload.size()) {
-            printf("Partial write on port no. %d (%04X:%04X @ %s): %lld / %d bytes\n",
-                   portNum + 1,
-                   validDevices.at(portNum).vendorIdentifier(),
-                   validDevices.at(portNum).productIdentifier(),
-                   port->portName().toLocal8Bit().constData(),
-                   static_cast<long long>(written),
-                   payload.size());
-        }
-
-        // *** NO waitForBytesWritten() HERE ***
-    }
-}
-
-        // if setting does not exist, register it
-        } else if(!settings->contains(func)) {
+        // --------------------------------------------------------------------
+        // If setting does not exist at all, register it for later editing
+        // --------------------------------------------------------------------
+        else if (settings && !settings->contains(func)) {
             settings->beginGroup("Output");
             settings->setValue(func, "");
             settingsMap[func] = "";
             settings->endGroup();
         }
-        // then finally:
+
+        // Move on to next buffered line
         buffer.removeFirst();
     }
+
     return false;
 }
 
