@@ -69,7 +69,7 @@ void qhookerMain::run()
                                     if(portNum >= 0 && portNum < validIDs.size()) {
                                         if(serialPort.at(portNum)->isOpen()) {
                                             serialPort.at(portNum)->write(tempBuffer.at(0).mid(6).toLocal8Bit());
-                                            if(!serialPort.at(portNum)->waitForBytesWritten(500))
+                                            if(!serialPort.at(portNum)->waitForBytesWritten(100))
                                                 printf("Wrote to port no. %d (%04X:%04X @ %s), but wasn't sent in time apparently!?\n",
                                                        portNum+1, validDevices.at(portNum).vendorIdentifier(), validDevices.at(portNum).productIdentifier(), serialPort.at(portNum)->portName().toLocal8Bit().constData());
                                         } else  printf("Requested to write to port no. %d (%04X:%04X @ %s), but it's not even open yet!\n",
@@ -93,7 +93,7 @@ void qhookerMain::run()
                             for(int portNum = 0; portNum < validIDs.size(); ++portNum)
                                 if(serialPort.at(portNum)->isOpen()) {
                                     serialPort.at(portNum)->write("E");
-                                    serialPort.at(portNum)->waitForBytesWritten(500);
+                                    serialPort.at(portNum)->waitForBytesWritten(100);
                                     serialPort.at(portNum)->close();
                                     printf("Force-closed port no. %d (%04X:%04X @ %s) - was opened incidentally without a corresponding close command.\n",
                                            portNum+1, validDevices.at(portNum).vendorIdentifier(), validDevices.at(portNum).productIdentifier(), serialPort.at(portNum)->portName().toLocal8Bit().constData());
@@ -104,7 +104,7 @@ void qhookerMain::run()
                         } else for(int portNum = 0; portNum < validIDs.size(); ++portNum) {
                             if(serialPort.at(portNum)->isOpen()) {
                                 serialPort.at(portNum)->write("E");
-                                if(serialPort.at(portNum)->waitForBytesWritten(500)) {
+                                if(serialPort.at(portNum)->waitForBytesWritten(100)) {
                                     serialPort.at(portNum)->close();
                                     printf("Force-closed port no. %d (%04X:%04X @ %s) since this game has no MameStop entry.\n",
                                            portNum+1, validDevices.at(portNum).vendorIdentifier(), validDevices.at(portNum).productIdentifier(), serialPort.at(portNum)->portName().toLocal8Bit().constData());
@@ -471,7 +471,7 @@ bool qhookerMain::GameStarted(const QString &input)
                             if(portNum >= 0 && portNum < validIDs.size()) {
                                 if(serialPort.at(portNum)->isOpen()) {
                                     serialPort.at(portNum)->write(tempBuffer.at(0).mid(6).toLocal8Bit());
-                                    if(!serialPort.at(portNum)->waitForBytesWritten(500))
+                                    if(!serialPort.at(portNum)->waitForBytesWritten(100))
                                         printf("Wrote to port no. %d (%04X:%04X @ %s), but wasn't sent in time apparently!?\n",
                                                portNum+1, validDevices.at(portNum).vendorIdentifier(), validDevices.at(portNum).productIdentifier(), serialPort.at(portNum)->portName().toLocal8Bit().constData());
                                 } else  printf("Requested to write to port no. %d (%04X:%04X @ %s), but it's not even open yet!\n",
@@ -495,7 +495,7 @@ bool qhookerMain::GameStarted(const QString &input)
                     for(int portNum = 0; portNum < validIDs.size(); ++portNum)
                         if(serialPort.at(portNum)->isOpen()) {
                             serialPort.at(portNum)->write("E");
-                            serialPort.at(portNum)->waitForBytesWritten(500);
+                            serialPort.at(portNum)->waitForBytesWritten(100);
                             serialPort.at(portNum)->close();
                             printf("Force-closed port no. %d (%04X:%04X @ %s) - was opened incidentally without a corresponding close command.\n",
                                    portNum+1, validDevices.at(portNum).vendorIdentifier(), validDevices.at(portNum).productIdentifier(), serialPort.at(portNum)->portName().toLocal8Bit().constData());
@@ -506,7 +506,7 @@ bool qhookerMain::GameStarted(const QString &input)
                 } else for(int portNum = 0; portNum < validIDs.size(); ++portNum) {
                     if(serialPort.at(portNum)->isOpen()) {
                         serialPort.at(portNum)->write("E");
-                        if(serialPort.at(portNum)->waitForBytesWritten(500)) {
+                        if(serialPort.at(portNum)->waitForBytesWritten(100)) {
                             serialPort.at(portNum)->close();
                             printf("Force-closed port no. %d (%04X:%04X @ %s) since this game has no MameStop entry.\n",
                                    portNum+1, validDevices.at(portNum).vendorIdentifier(), validDevices.at(portNum).productIdentifier(), serialPort.at(portNum)->portName().toLocal8Bit().constData());
@@ -581,7 +581,7 @@ if (action.at(i).contains("cmw")) {
                                     action[i] = action[i].replace("%s%", "%1").arg(0);
 
                                 serialPort.at(portNum)->write(action.at(i).mid(action.at(i).indexOf("cmw")+6).toLocal8Bit());
-                                if(!serialPort.at(portNum)->waitForBytesWritten(500))
+                                if(!serialPort.at(portNum)->waitForBytesWritten(100))
                                     printf("Wrote to port no. %d (%04X:%04X @ %s), but wasn't sent in time apparently!?\n",
                                            portNum+1, validDevices.at(portNum).vendorIdentifier(), validDevices.at(portNum).productIdentifier(), serialPort.at(portNum)->portName().toLocal8Bit().constData());
                             }
@@ -603,7 +603,7 @@ if (action.at(i).contains("cmw")) {
                                 action[i] = action[i].replace("%s%", "%1").arg(buffer[0].mid(buffer[0].indexOf('=')+2).toInt());
 
                             serialPort.at(portNum)->write(action.at(i).mid(action.at(i).indexOf("cmw")+6).toLocal8Bit());
-                            if(!serialPort.at(portNum)->waitForBytesWritten(500))
+                            if(!serialPort.at(portNum)->waitForBytesWritten(100))
                                 printf("Wrote to port no. %d (%04X:%04X @ %s), but wasn't sent in time apparently!?\n",
                                        portNum+1, validDevices.at(portNum).vendorIdentifier(), validDevices.at(portNum).productIdentifier(), serialPort.at(portNum)->portName().toLocal8Bit().constData());
                         }
