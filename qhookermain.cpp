@@ -374,63 +374,73 @@ bool qhookerMain::GameSearching(const QString &input)
                 "/ini/" + gameName + ".ini");
                 }
 
-                if(settings->contains("MameStart")) {
-                    //qInfo() << "Detected start statement:";
-                    QStringList tempBuffer = settings->value("MameStart").toStringList();
-                    //qInfo() << tempBuffer;
-                    while(!tempBuffer.isEmpty()) {
-                        if(tempBuffer.at(0).contains("cmo")) {
-                            // open serial port at number (index(4))
-                            int portNum = tempBuffer.at(0).at(4).digitValue()-1;
-                            if(portNum >= 0 && portNum < validIDs.size()) {
-                                if(!serialPort.at(portNum)->isOpen()) {
-                                    serialPort.at(portNum)->open(QIODevice::WriteOnly);
-                                    // Just in case Wendies complains:
-                                    serialPort.at(portNum)->setDataTerminalReady(true);
-                                    printf("Opened port no. %d (%04X:%04X @ %s)\n",
-                                           portNum+1, validDevices.at(portNum).vendorIdentifier(), validDevices.at(portNum).productIdentifier(), serialPort.at(portNum)->portName().toLocal8Bit().constData());
-                                } else {
-                                    printf("Waaaaait a second... Port %d (%04X:%04X @ %s) is already open!\n",
-                                           portNum+1, validDevices.at(portNum).vendorIdentifier(), validDevices.at(portNum).productIdentifier(), serialPort.at(portNum)->portName().toLocal8Bit().constData());
-                                }
-                            }
-                        } else if (tempBuffer.at(0).contains("cmw")) {
-                            int portNum = tempBuffer.at(0).at(4).digitValue() - 1;
-                            if (portNum >= 0 && portNum < validIDs.size()) {
-                                if (serialPort.at(portNum)->isOpen()) {
-                                    QByteArray payload = tempBuffer.at(0).mid(6).toLocal8Bit();
-                                    qint64 written = serialPort.at(portNum)->write(payload);
-                                    if (written < 0) {
-                                        // Real error case – port actually spat the dummy
-                                        printf("Failed to write to port no. %d (%04X:%04X @ %s): %s\n",
-                                            portNum + 1,
-                                            validDevices.at(portNum).vendorIdentifier(),
-                                            validDevices.at(portNum).productIdentifier(),
-                                            serialPort.at(portNum)->portName().toLocal8Bit().constData(),
-                                            serialPort.at(portNum)->errorString().toLocal8Bit().constData());
-                                    } else if (written != payload.size()) {
-                                        // Non-fatal: short write, but don’t kill the port
-                                        printf("Partial write to port no. %d (%04X:%04X @ %s): %lld / %d bytes\n",
-                                            portNum + 1,
-                                            validDevices.at(portNum).vendorIdentifier(),
-                                            validDevices.at(portNum).productIdentifier(),
-                                            serialPort.at(portNum)->portName().toLocal8Bit().constData(),
-                                            static_cast<long long>(written),
-                                            payload.size());
-                                    }
+if (settings->contains("MameStart")) {
+    //qInfo() << "Detected start statement:";
+    QStringList tempBuffer = settings->value("MameStart").toStringList();
+    //qInfo() << tempBuffer;
 
-                                    // *** no waitForBytesWritten() here ***
-                                } else {
-                                    printf("Requested to write to port no. %d (%04X:%04X @ %s), but it's not even open yet!\n",
-                                        portNum + 1,
-                                        validDevices.at(portNum).productIdentifier(),
-                                        serialPort.at(portNum)->portName().toLocal8Bit().constData());
-                                }
-                            }
-                        }    
-                        tempBuffer.removeFirst();
-                    }
+    while (!tempBuffer.isEmpty()) {
+        QString cmd = tempBuffer.at(0).trimmed();
+
+        if (cmd.contains("cmo")) {
+            // open serial port at number (index 4)
+            int portNum = cmd.at(4).digitValue() - 1;
+            if (portNum >= 0 && portNum < validIDs.size()) {
+                if (!serialPort.at(portNum)->isOpen()) {
+                    serialPort.at(portNum)->open(QIODevice::WriteOnly);
+                    // Just in case Wendies complains:
+                    serialPort.at(portNum)->setDataTerminalReady(true);
+                    printf("Opened port no. %d (%04X:%04X @ %s)\n",
+                           portNum + 1,
+                           validDevices.at(portNum).vendorIdentifier(),
+                           validDevices.at(portNum).productIdentifier(),
+                           serialPort.at(portNum)->portName().toLocal8Bit().constData());
+                } else {
+                    printf("Waaaaait a second... Port %d (%04X:%04X @ %s) is already open!\n",
+                           portNum + 1,
+                           validDevices.at(portNum).vendorIdentifier(),
+                           validDevices.at(portNum).productIdentifier(),
+                           serialPort.at(portNum)->portName().toLocal8Bit().constData());
                 }
+            }
+        } else if (cmd.contains("cmw")) {
+            // *** This is where S and other startup commands are sent ***
+            int portNum = cmd.at(4).digitValue() - 1;
+            if (portNum >= 0 && portNum < validIDs.size()) {
+                if (serialPort.at(portNum)->isOpen()) {
+                    QByteArray payload = cmd.mid(6).toLocal8Bit();
+
+                    // Debug so we can *see* S going out:
+                    printf("MameStart: writing to port %d: '%s'\n",
+                           portNum + 1,
+                           payload.constData());
+
+                    serialPort.at(portNum)->write(payload);
+
+                    // For this one-off startup path, it’s OK to block briefly.
+                    if (!serialPort.at(portNum)->waitForBytesWritten(500)) {
+                        printf("MameStart: wrote to port no. %d (%04X:%04X @ %s), "
+                               "but wasn't sent in time apparently! (startup)\n",
+                               portNum + 1,
+                               validDevices.at(portNum).vendorIdentifier(),
+                               validDevices.at(portNum).productIdentifier(),
+                               serialPort.at(portNum)->portName().toLocal8Bit().constData());
+                    }
+                } else {
+                    printf("MameStart: requested to write to port no. %d (%04X:%04X @ %s), "
+                           "but it's not even open yet!\n",
+                           portNum + 1,
+                           validDevices.at(portNum).vendorIdentifier(),
+                           validDevices.at(portNum).productIdentifier(),
+                           serialPort.at(portNum)->portName().toLocal8Bit().constData());
+                }
+            }
+        }
+
+        tempBuffer.removeFirst();
+    }
+}
+
                 buffer.removeFirst();
                 return true;
             } else {
