@@ -382,28 +382,40 @@ if (settings->contains("MameStart")) {
     while (!tempBuffer.isEmpty()) {
         QString cmd = tempBuffer.at(0).trimmed();
 
-        if (cmd.contains("cmo")) {
-            // open serial port at number (index 4)
-            int portNum = cmd.at(4).digitValue() - 1;
-            if (portNum >= 0 && portNum < validIDs.size()) {
-                if (!serialPort.at(portNum)->isOpen()) {
-                    serialPort.at(portNum)->open(QIODevice::WriteOnly);
-                    // Just in case Wendies complains:
-                    serialPort.at(portNum)->setDataTerminalReady(true);
-                    printf("Opened port no. %d (%04X:%04X @ %s)\n",
-                           portNum + 1,
-                           validDevices.at(portNum).vendorIdentifier(),
-                           validDevices.at(portNum).productIdentifier(),
-                           serialPort.at(portNum)->portName().toLocal8Bit().constData());
-                } else {
-                    printf("Waaaaait a second... Port %d (%04X:%04X @ %s) is already open!\n",
-                           portNum + 1,
-                           validDevices.at(portNum).vendorIdentifier(),
-                           validDevices.at(portNum).productIdentifier(),
-                           serialPort.at(portNum)->portName().toLocal8Bit().constData());
-                }
+       if (cmd.contains("cmo")) {
+    // open serial port at number (index 4)
+    int portNum = cmd.at(4).digitValue() - 1;
+    if (portNum >= 0 && portNum < validIDs.size()) {
+        QSerialPort *port = serialPort.at(portNum);
+        if (!port) {
+            printf("MameStart: serialPort[%d] is null!\n", portNum);
+        } else if (!port->isOpen()) {
+            // Try to open
+            if (!port->open(QIODevice::WriteOnly)) {
+                printf("MameStart: FAILED to open port no. %d (%04X:%04X @ %s): %s\n",
+                       portNum + 1,
+                       validDevices.at(portNum).vendorIdentifier(),
+                       validDevices.at(portNum).productIdentifier(),
+                       port->portName().toLocal8Bit().constData(),
+                       port->errorString().toLocal8Bit().constData());
+            } else {
+                // Only set DTR if open() actually worked
+                port->setDataTerminalReady(true);
+                printf("Opened port no. %d (%04X:%04X @ %s)\n",
+                       portNum + 1,
+                       validDevices.at(portNum).vendorIdentifier(),
+                       validDevices.at(portNum).productIdentifier(),
+                       port->portName().toLocal8Bit().constData());
             }
-        } else if (cmd.contains("cmw")) {
+        } else {
+            printf("Waaaaait a second... Port %d (%04X:%04X @ %s) is already open!\n",
+                   portNum + 1,
+                   validDevices.at(portNum).vendorIdentifier(),
+                   validDevices.at(portNum).productIdentifier(),
+                   port->portName().toLocal8Bit().constData());
+        }
+    }
+} else if (cmd.contains("cmw")) {
             // *** This is where S and other startup commands are sent ***
             int portNum = cmd.at(4).digitValue() - 1;
             if (portNum >= 0 && portNum < validIDs.size()) {
@@ -461,61 +473,80 @@ bool qhookerMain::GameStarted(const QString &input)
 
     // Helper: write a list of "cmw" actions with a given numeric state
     auto writeActions = [this](const QStringList &actions, int stateValue)
-    {
-        for (QString action : actions) {
-            action = action.trimmed();
-            if (action.isEmpty())
-                continue;
+{
+    for (QString action : actions) {
+        action = action.trimmed();
+        if (action.isEmpty())
+            continue;
 
-            if (!action.contains("cmw"))
-                continue;
+        if (!action.contains("cmw"))
+            continue;
 
-            int cmwIndex = action.indexOf("cmw");
-            if (cmwIndex < 0 || cmwIndex + 5 >= action.size())
-                continue;
+        int cmwIndex = action.indexOf("cmw");
+        if (cmwIndex < 0 || cmwIndex + 5 >= action.size())
+            continue;
 
-            int portNum = action.at(cmwIndex + 4).digitValue() - 1;
-            if (portNum < 0 || portNum >= validIDs.size())
-                continue;
+        int portNum = action.at(cmwIndex + 4).digitValue() - 1;
+        if (portNum < 0 || portNum >= validIDs.size())
+            continue;
 
-            QSerialPort *port = serialPort.at(portNum);
-            if (!port || !port->isOpen()) {
-                printf("Requested to write to port no. %d (%04X:%04X @ %s), but it's not open! (GameStarted)\n",
-                       portNum + 1,
-                       validDevices.at(portNum).vendorIdentifier(),
-                       validDevices.at(portNum).productIdentifier(),
-                       port ? port->portName().toLocal8Bit().constData() : "<null>");
-                continue;
-            }
-
-            // Replace %s% with current state if needed
-            if (action.contains("%s%"))
-                action = action.replace("%s%", "%1").arg(stateValue);
-
-            QByteArray payload = action.mid(cmwIndex + 6).toLocal8Bit();
-
-            qint64 written = port->write(payload);
-            if (written < 0) {
-                QSerialPort::SerialPortError err = port->error();
-                printf("Serial write FAILED on port no. %d (%04X:%04X @ %s): err=%d, %s\n",
-                       portNum + 1,
-                       validDevices.at(portNum).vendorIdentifier(),
-                       validDevices.at(portNum).productIdentifier(),
-                       port->portName().toLocal8Bit().constData(),
-                       static_cast<int>(err),
-                       port->errorString().toLocal8Bit().constData());
-            } else if (written != payload.size()) {
-                printf("Partial write on port no. %d (%04X:%04X @ %s): %lld / %d bytes\n",
-                       portNum + 1,
-                       validDevices.at(portNum).vendorIdentifier(),
-                       validDevices.at(portNum).productIdentifier(),
-                       port->portName().toLocal8Bit().constData(),
-                       static_cast<long long>(written),
-                       payload.size());
-            }
-            // NOTE: no waitForBytesWritten() here on purpose
+        QSerialPort *port = serialPort.at(portNum);
+        if (!port) {
+            printf("GameStarted: serialPort[%d] is null!\n", portNum);
+            continue;
         }
-    };
+
+        // --- Lazy-open logic: if it's not open, try to open it now ---
+        if (!port->isOpen()) {
+            printf("GameStarted: port %d not open, attempting lazy-open...\n",
+                   portNum + 1);
+
+            if (!port->open(QIODevice::WriteOnly)) {
+                printf("GameStarted: FAILED to open port no. %d (%04X:%04X @ %s): %s\n",
+                       portNum + 1,
+                       validDevices.at(portNum).vendorIdentifier(),
+                       validDevices.at(portNum).productIdentifier(),
+                       port->portName().toLocal8Bit().constData(),
+                       port->errorString().toLocal8Bit().constData());
+                continue;
+            }
+
+            port->setDataTerminalReady(true);
+            printf("GameStarted: lazy-opened port no. %d (%04X:%04X @ %s)\n",
+                   portNum + 1,
+                   validDevices.at(portNum).vendorIdentifier(),
+                   validDevices.at(portNum).productIdentifier(),
+                   port->portName().toLocal8Bit().constData());
+        }
+
+        // Replace %s% with current state if needed
+        if (action.contains("%s%"))
+            action = action.replace("%s%", "%1").arg(stateValue);
+
+        QByteArray payload = action.mid(cmwIndex + 6).toLocal8Bit();
+
+        qint64 written = port->write(payload);
+        if (written < 0) {
+            QSerialPort::SerialPortError err = port->error();
+            printf("Serial write FAILED on port no. %d (%04X:%04X @ %s): err=%d, %s\n",
+                   portNum + 1,
+                   validDevices.at(portNum).vendorIdentifier(),
+                   validDevices.at(portNum).productIdentifier(),
+                   port->portName().toLocal8Bit().constData(),
+                   static_cast<int>(err),
+                   port->errorString().toLocal8Bit().constData());
+        } else if (written != payload.size()) {
+            printf("Partial write on port no. %d (%04X:%04X @ %s): %lld / %d bytes\n",
+                   portNum + 1,
+                   validDevices.at(portNum).vendorIdentifier(),
+                   validDevices.at(portNum).productIdentifier(),
+                   port->portName().toLocal8Bit().constData(),
+                   static_cast<long long>(written),
+                   payload.size());
+        }
+        // Still NO waitForBytesWritten() here
+    }
+};
 
     while (!buffer.isEmpty()) {
         buffer[0] = buffer.at(0).trimmed();
