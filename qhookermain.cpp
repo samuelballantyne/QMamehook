@@ -590,26 +590,66 @@ if (action.at(i).contains("cmw")) {
                 }
             // %s% wildcards: just replace with the number received
             } else {
-                QStringList action = settingsMap[func].split(',', Qt::SkipEmptyParts);
+    QStringList action = settingsMap[func].split(',', Qt::SkipEmptyParts);
 
-                for(int i = 0; i < action.length(); ++i) {
-                    if(action.at(i).contains("cmw")) {
-                        // we can safely assume that "cmw" will always be at a set place.
-                        int portNum = action.at(i).at(action.at(i).indexOf("cmw")+4).digitValue()-1;
+    for (int i = 0; i < action.length(); ++i) {
+        if (!action.at(i).contains("cmw"))
+            continue;
 
-                        if(portNum >= 0 && portNum < validIDs.size()) {
-                            // if contains %s%, s needs to be replaced by state.
-                            if(action.at(i).contains("%s%"))
-                                action[i] = action[i].replace("%s%", "%1").arg(buffer[0].mid(buffer[0].indexOf('=')+2).toInt());
+        int cmwIndex = action.at(i).indexOf("cmw");
+        int portNum  = action.at(i).at(cmwIndex + 4).digitValue() - 1;
 
-                            serialPort.at(portNum)->write(action.at(i).mid(action.at(i).indexOf("cmw")+6).toLocal8Bit());
-                            if(!serialPort.at(portNum)->waitForBytesWritten(100))
-                                printf("Wrote to port no. %d (%04X:%04X @ %s), but wasn't sent in time apparently!? 607\n",
-                                       portNum+1, validDevices.at(portNum).vendorIdentifier(), validDevices.at(portNum).productIdentifier(), serialPort.at(portNum)->portName().toLocal8Bit().constData());
-                        }
-                    }
-                }
-            }
+        if (portNum < 0 || portNum >= validIDs.size())
+            continue;
+
+        QSerialPort *port = serialPort.at(portNum);
+        if (!port || !port->isOpen()) {
+            printf("Requested to write to port no. %d (%04X:%04X @ %s), but it's not open! (live output)\n",
+                   portNum + 1,
+                   validDevices.at(portNum).vendorIdentifier(),
+                   validDevices.at(portNum).productIdentifier(),
+                   port ? port->portName().toLocal8Bit().constData() : "<null>");
+            continue;
+        }
+
+        QString cmd = action.at(i);
+
+        // if contains %s%, s needs to be replaced by state.
+        if (cmd.contains("%s%")) {
+            int stateVal = buffer[0].mid(buffer[0].indexOf('=') + 2).toInt();
+            cmd = cmd.replace("%s%", "%1").arg(stateVal);
+        }
+
+        QByteArray payload = cmd.mid(cmwIndex + 6).toLocal8Bit();
+
+        qint64 written = port->write(payload);
+
+        if (written < 0) {
+            QSerialPort::SerialPortError err = port->error();
+            printf("Serial write FAILED on port no. %d (%04X:%04X @ %s): err=%d, %s\n",
+                   portNum + 1,
+                   validDevices.at(portNum).vendorIdentifier(),
+                   validDevices.at(portNum).productIdentifier(),
+                   port->portName().toLocal8Bit().constData(),
+                   static_cast<int>(err),
+                   port->errorString().toLocal8Bit().constData());
+            // Optional recovery:
+            // port->clear(QSerialPort::AllDirections);
+            // port->close(); // will be reopened on next cmo
+        } else if (written != payload.size()) {
+            printf("Partial write on port no. %d (%04X:%04X @ %s): %lld / %d bytes\n",
+                   portNum + 1,
+                   validDevices.at(portNum).vendorIdentifier(),
+                   validDevices.at(portNum).productIdentifier(),
+                   port->portName().toLocal8Bit().constData(),
+                   static_cast<long long>(written),
+                   payload.size());
+        }
+
+        // *** NO waitForBytesWritten() HERE ***
+    }
+}
+
         // if setting does not exist, register it
         } else if(!settings->contains(func)) {
             settings->beginGroup("Output");
